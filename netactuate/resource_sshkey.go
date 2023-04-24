@@ -3,6 +3,7 @@ package netactuate
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -14,8 +15,8 @@ func resourceSshKey() *schema.Resource {
 	return &schema.Resource{
 		CreateContext: resourceSshKeyCreate,
 		ReadContext:   resourceSshKeyRead,
-		UpdateContext: resourceSshKeyUpdate,
 		DeleteContext: resourceSshKeyDelete,
+		UpdateContext: resourceSshKeyUpdate,
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
@@ -23,10 +24,15 @@ func resourceSshKey() *schema.Resource {
 			"name": {
 				Type:     schema.TypeString,
 				Required: true,
+				ForceNew: true,
 			},
 			"key": {
 				Type:     schema.TypeString,
 				Required: true,
+				ForceNew: true,
+				StateFunc: func(val any) string {
+					return strings.TrimSpace(val.(string))
+				},
 			},
 			"last_updated": {
 				Type:     schema.TypeString,
@@ -71,27 +77,6 @@ func resourceSshKeyRead(ctx context.Context, d *schema.ResourceData, m interface
 	return diags
 }
 
-func resourceSshKeyUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
-	c := m.(*gona.Client)
-
-	id, err := strconv.Atoi(d.Id())
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	_, err = c.UpdateSSHKey(id, d.Get("name").(string), d.Get("key").(string))
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	err = d.Set("last_updated", time.Now().Format(time.RFC850))
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	return resourceSshKeyRead(ctx, d, m)
-}
-
 func resourceSshKeyDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	c := m.(*gona.Client)
 
@@ -100,10 +85,46 @@ func resourceSshKeyDelete(ctx context.Context, d *schema.ResourceData, m interfa
 		return diag.FromErr(err)
 	}
 
+	if id == 0 {
+		return nil
+	}
+
 	err = c.DeleteSSHKey(id)
 	if err != nil {
 		return diag.FromErr(err)
 	}
+
+	return nil
+}
+
+func resourceSshKeyUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+	c := m.(*gona.Client)
+
+	// Delete the first Key
+	id, err := strconv.Atoi(d.Id())
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
+	if id == 0 {
+		return nil
+	}
+
+	err = c.DeleteSSHKey(id)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
+	// Sleep 3 seconds.
+	time.Sleep(3 * time.Second)
+
+	// Create the second key
+	sshKey, err := c.CreateSSHKey(d.Get("name").(string), d.Get("key").(string))
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
+	d.SetId(strconv.Itoa(sshKey.ID))
 
 	return nil
 }
